@@ -2,7 +2,17 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY_SCRIPT="$SCRIPT_DIR/agent_local.py"
+PY_SCRIPT="$SCRIPT_DIR/agent_langgraph.py"
+
+# Load environment variables from local files when present.
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$SCRIPT_DIR/.env"; set +a
+fi
+if [[ -f "$SCRIPT_DIR/.env.local" ]]; then
+  # shellcheck disable=SC1091
+  set -a; source "$SCRIPT_DIR/.env.local"; set +a
+fi
 
 LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}"
 MODEL_NAME="${MODEL_NAME:-qwen/qwen3.5-9b}"
@@ -36,5 +46,9 @@ python3 "$PY_SCRIPT" \
   --user-request "$USER_REQUEST" \
   --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
   --model "$MODEL_NAME" \
+  --progress \
   --show-diagnostics \
-  --print-intent
+  --print-intent \
+  --max-retries 2 \
+  --llm-timeout-sec 240 \
+  --llm-max-retries 2
