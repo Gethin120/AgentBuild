@@ -1,7 +1,0 @@
-hello
-
-
-scpomd
-
-
-bhgy 

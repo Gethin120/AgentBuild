@@ -39,6 +39,12 @@ python3 /Users/gethin/workspace/jiebanerxing/agent_langgraph.py \
 - `--max-retries`：无解时自动重规划次数。
 - `--show-diagnostics`：输出过滤原因。
 - `--print-intent`：输出模型解析到的结构化意图。
+- `--planner-timeout-sec`：单次规划调用超时（秒），超时会进入错误分支并按策略重试。
+- `--planner-max-retries`：规划调用失败时额外重试次数（用于网络/QPS瞬时错误）。
+
+## 安全约定
+- 高德 Key 仅通过服务端环境变量 `AMAP_WEB_SERVICE_KEY` 提供，不通过前端参数传入。
+- LangGraph 状态中不保存 AMap Key；规划节点使用闭包读取服务端环境变量。
 
 ## 你现在能学到的 Agent 能力
 1. 有状态图式编排（StateGraph）
