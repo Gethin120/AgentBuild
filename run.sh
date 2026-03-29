@@ -2,7 +2,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PY_SCRIPT="$SCRIPT_DIR/agent_langgraph.py"
+PY_MODULE="app.agent"
 
 # Load environment variables from local files when present.
 if [[ -f "$SCRIPT_DIR/.env" ]]; then
@@ -18,8 +18,8 @@ LMSTUDIO_BASE_URL="${LMSTUDIO_BASE_URL:-http://127.0.0.1:1234/v1}"
 MODEL_NAME="${MODEL_NAME:-qwen/qwen3.5-9b}"
 AMAP_WEB_SERVICE_KEY="${AMAP_WEB_SERVICE_KEY:-}"
 
-if [[ ! -f "$PY_SCRIPT" ]]; then
-  echo "Error: missing script: $PY_SCRIPT" >&2
+if [[ ! -f "$SCRIPT_DIR/app/agent.py" ]]; then
+  echo "Error: missing module file: $SCRIPT_DIR/app/agent.py" >&2
   exit 1
 fi
 
@@ -42,13 +42,26 @@ fi
 
 USER_REQUEST="$1"
 
-python3 "$PY_SCRIPT" \
-  --user-request "$USER_REQUEST" \
-  --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
-  --model "$MODEL_NAME" \
-  --progress \
-  --show-diagnostics \
-  --print-intent \
-  --max-retries 2 \
-  --llm-timeout-sec 240 \
-  --llm-max-retries 2
+if [[ -x "/opt/miniconda3/bin/conda" ]]; then
+  /opt/miniconda3/bin/conda run -n llm_local python -m "$PY_MODULE" \
+    --user-request "$USER_REQUEST" \
+    --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
+    --model "$MODEL_NAME" \
+    --progress \
+    --show-diagnostics \
+    --print-intent \
+    --retry-max-attempts 2 \
+    --planner-timeout-sec 120 \
+    --planner-max-retries 2
+else
+  python3 -m "$PY_MODULE" \
+    --user-request "$USER_REQUEST" \
+    --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
+    --model "$MODEL_NAME" \
+    --progress \
+    --show-diagnostics \
+    --print-intent \
+    --retry-max-attempts 2 \
+    --planner-timeout-sec 120 \
+    --planner-max-retries 2
+fi

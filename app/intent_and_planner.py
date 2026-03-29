@@ -4,15 +4,13 @@ import argparse
 import json
 import os
 import re
-import sys
-import time
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
-from engine import (
+from app.engine import (
     PlanningConstraints,
     RendezvousPlanner,
     ScoringWeights,
@@ -31,7 +29,6 @@ def call_lmstudio_chat(
     temperature: float = 0.2,
     timeout_sec: int = 180,
     max_retries: int = 2,
-    on_retry: Optional[Callable[[int, str], None]] = None,
 ) -> str:
     endpoint = urljoin(base_url.rstrip("/") + "/", "chat/completions")
     payload = {
@@ -55,24 +52,6 @@ def call_lmstudio_chat(
             if attempt >= max_retries:
                 raise
             attempt += 1
-            if on_retry:
-                on_retry(attempt, f"LM Studio request retry {attempt}/{max_retries}")
-
-
-def emit_progress(
-    enabled: bool, stage: str, status: str, message: str, extra: Optional[Dict[str, Any]] = None
-) -> None:
-    if not enabled:
-        return
-    event = {
-        "time": datetime.now().isoformat(timespec="seconds"),
-        "stage": stage,
-        "status": status,
-        "message": message,
-    }
-    if extra:
-        event["extra"] = extra
-    print(f"[PROGRESS] {json.dumps(event, ensure_ascii=False)}", file=sys.stderr, flush=True)
 
 
 def extract_json_object(text: str) -> Dict[str, Any]:
@@ -167,28 +146,7 @@ def sanitize_intent(intent: Dict[str, Any]) -> Dict[str, Any]:
     return intent
 
 
-def run_plan(
-    intent: Dict[str, Any],
-    amap_key: str,
-    show_diagnostics: bool,
-    progress_enabled: bool = False,
-    progress_hook: Optional[Callable[[Dict[str, Any]], None]] = None,
-) -> Dict[str, Any]:
-    def push(stage: str, status: str, message: str, extra: Optional[Dict[str, Any]] = None) -> None:
-        event = {
-            "time": datetime.now().isoformat(timespec="seconds"),
-            "stage": stage,
-            "status": status,
-            "message": message,
-        }
-        if extra:
-            event["extra"] = extra
-        emit_progress(progress_enabled, stage, status, message, extra)
-        if progress_hook:
-            progress_hook(event)
-
-    run_started = time.perf_counter()
-    push("plan", "start", "Preparing planning request")
+def run_plan(intent: Dict[str, Any], amap_key: str, show_diagnostics: bool) -> Dict[str, Any]:
     request = demo_request()
 
     constraints = intent.get("constraints", {})
@@ -216,7 +174,6 @@ def run_plan(
     destination_address = intent["destination_address"]
 
     if mode == "auto":
-        push("candidates", "start", "Generating auto pickup candidates")
         auto = intent.get("auto_pickup", {})
         request = resolve_request_with_auto_pickups(
             base_request=request,
@@ -230,14 +187,7 @@ def run_plan(
             auto_pickup_sample_km=float(auto.get("sample_km", 5.0)),
             auto_pickup_keywords=str(auto.get("keywords", "地铁站|公交站|停车场|商场")),
         )
-        push(
-            "candidates",
-            "done",
-            "Auto pickup candidates generated",
-            {"count": len(request.pickup_candidates)},
-        )
     else:
-        push("candidates", "start", "Resolving manual pickup addresses")
         request = resolve_request_from_addresses(
             base_request=request,
             amap_key=amap_key,
@@ -247,26 +197,9 @@ def run_plan(
             pickup_candidate_addresses=[str(x) for x in intent.get("pickup_addresses", [])],
             geocode_city=geocode_city,
         )
-        push(
-            "candidates",
-            "done",
-            "Manual pickup candidates resolved",
-            {"count": len(request.pickup_candidates)},
-        )
 
-    push("routing", "start", "Evaluating candidate routes")
     planner = RendezvousPlanner(provider=build_provider("amap", amap_key))
     options, diagnostics = planner.plan_with_diagnostics(request)
-    push(
-        "routing",
-        "done",
-        "Route evaluation completed",
-        {
-            "feasible_options": len(options),
-            "filtered_candidates": len(diagnostics.filtered_candidates),
-            "elapsed_sec": round(time.perf_counter() - run_started, 2),
-        },
-    )
 
     result = {
         "resolved_locations": {
@@ -290,23 +223,6 @@ def run_plan(
         "options": [
             {
                 "pickup_point": x.pickup_point.name,
-                "pickup_poi": {
-                    "name": x.pickup_point.name,
-                    "lat": x.pickup_point.lat,
-                    "lon": x.pickup_point.lon,
-                },
-                "to_pickup_plan": {
-                    "driver": {
-                        "mode": request.driver_mode,
-                        "travel_time_min": x.travel_time_driver_to_pickup,
-                        "eta_to_pickup": x.eta_driver_to_pickup.isoformat(timespec="minutes"),
-                    },
-                    "passenger": {
-                        "mode": request.passenger_mode,
-                        "travel_time_min": x.travel_time_passenger_to_pickup,
-                        "eta_to_pickup": x.eta_passenger_to_pickup.isoformat(timespec="minutes"),
-                    },
-                },
                 "score": x.score,
                 "eta_driver_to_pickup": x.eta_driver_to_pickup.isoformat(timespec="minutes"),
                 "eta_passenger_to_pickup": x.eta_passenger_to_pickup.isoformat(timespec="minutes"),
@@ -335,14 +251,11 @@ def main() -> int:
     parser.add_argument("--print-intent", action="store_true")
     parser.add_argument("--llm-timeout-sec", type=int, default=180)
     parser.add_argument("--llm-max-retries", type=int, default=2)
-    parser.add_argument("--progress", action="store_true", help="Print key stage progress to stderr")
     args = parser.parse_args()
 
     if not args.amap_key:
         raise ValueError("AMap key is required: pass --amap-key or set AMAP_WEB_SERVICE_KEY.")
 
-    overall_started = time.perf_counter()
-    emit_progress(args.progress, "intent", "start", "Parsing natural-language request")
     system_prompt = intent_prompt_template(datetime.now().isoformat(timespec="minutes"))
     model_output = call_lmstudio_chat(
         base_url=args.lmstudio_base_url,
@@ -351,34 +264,16 @@ def main() -> int:
         user_prompt=args.user_request,
         timeout_sec=args.llm_timeout_sec,
         max_retries=args.llm_max_retries,
-        on_retry=(
-            lambda attempt, msg: emit_progress(
-                args.progress, "intent", "retry", msg, {"attempt": attempt}
-            )
-        ),
     )
     intent = extract_json_object(model_output)
     validate_intent(intent)
     intent = sanitize_intent(intent)
-    emit_progress(args.progress, "intent", "done", "Intent parsed successfully")
 
     if args.print_intent:
         print("Parsed intent:")
         print(json.dumps(intent, ensure_ascii=False, indent=2))
 
-    result = run_plan(
-        intent=intent,
-        amap_key=args.amap_key,
-        show_diagnostics=args.show_diagnostics,
-        progress_enabled=args.progress,
-    )
-    emit_progress(
-        args.progress,
-        "complete",
-        "done",
-        "Agent run completed",
-        {"elapsed_sec": round(time.perf_counter() - overall_started, 2)},
-    )
+    result = run_plan(intent=intent, amap_key=args.amap_key, show_diagnostics=args.show_diagnostics)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0
 

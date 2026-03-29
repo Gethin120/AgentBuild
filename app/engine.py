@@ -9,7 +9,6 @@ import time
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple
 from urllib.parse import urlencode
 from urllib.request import urlopen
-from urllib.error import URLError
 
 
 AMAP_MIN_INTERVAL_SEC = 0.40
@@ -138,7 +137,6 @@ class AMapTravelTimeProvider:
         self.timeout_sec = timeout_sec
         self._city_cache: Dict[Tuple[float, float], str] = {}
         self._travel_cache: Dict[Tuple[str, float, float, float, float], int] = {}
-        self._network_retries = 2
 
     def estimate_minutes(
         self, origin: Location, destination: Location, mode: str, depart_at: datetime
@@ -221,19 +219,12 @@ class AMapTravelTimeProvider:
     def _get_json(self, path: str, params: Dict[str, str]) -> Dict[str, Any]:
         attempt = 0
         while True:
-            try:
-                self._respect_qps_limit()
-                query = urlencode(params)
-                url = f"{self.BASE_URL}{path}?{query}"
-                with urlopen(url, timeout=self.timeout_sec) as resp:
-                    payload = resp.read().decode("utf-8")
-                data = json_loads(payload)
-            except (TimeoutError, URLError) as exc:
-                if attempt < self._network_retries:
-                    attempt += 1
-                    time.sleep(0.6 * attempt)
-                    continue
-                raise RuntimeError(f"AMap request timeout/network error: {exc}") from exc
+            self._respect_qps_limit()
+            query = urlencode(params)
+            url = f"{self.BASE_URL}{path}?{query}"
+            with urlopen(url, timeout=self.timeout_sec) as resp:
+                payload = resp.read().decode("utf-8")
+            data = json_loads(payload)
 
             # 10021 is often QPS/limit related; retry with backoff.
             if str(data.get("status")) == "0" and str(data.get("infocode")) == "10021" and attempt < 3:
@@ -263,7 +254,6 @@ class AMapGeocoder:
         self.timeout_sec = timeout_sec
         self.city_hint = city_hint
         self._address_cache: Dict[Tuple[str, str], Location] = {}
-        self._network_retries = 2
 
     def geocode(self, address: str, name: str) -> Location:
         cache_key = (address.strip(), self.city_hint or "")
@@ -340,19 +330,12 @@ class AMapGeocoder:
     def _get_json(self, path: str, params: Dict[str, str]) -> Dict[str, Any]:
         attempt = 0
         while True:
-            try:
-                self._respect_qps_limit()
-                query = urlencode(params)
-                url = f"{self.BASE_URL}{path}?{query}"
-                with urlopen(url, timeout=self.timeout_sec) as resp:
-                    payload = resp.read().decode("utf-8")
-                data = json_loads(payload)
-            except (TimeoutError, URLError) as exc:
-                if attempt < self._network_retries:
-                    attempt += 1
-                    time.sleep(0.6 * attempt)
-                    continue
-                raise RuntimeError(f"AMap geocode timeout/network error: {exc}") from exc
+            self._respect_qps_limit()
+            query = urlencode(params)
+            url = f"{self.BASE_URL}{path}?{query}"
+            with urlopen(url, timeout=self.timeout_sec) as resp:
+                payload = resp.read().decode("utf-8")
+            data = json_loads(payload)
 
             # 10021 is often QPS/limit related; retry with backoff.
             if str(data.get("status")) == "0" and str(data.get("infocode")) == "10021" and attempt < 3:
@@ -373,7 +356,6 @@ class AMapPickupCandidateGenerator:
             raise ValueError("AMap api_key is required for candidate generation.")
         self.api_key = api_key
         self.timeout_sec = timeout_sec
-        self._network_retries = 2
 
     def generate_candidates(
         self,
@@ -472,19 +454,12 @@ class AMapPickupCandidateGenerator:
     def _get_json(self, path: str, params: Dict[str, str]) -> Dict[str, Any]:
         attempt = 0
         while True:
-            try:
-                amap_global_rate_limit_wait()
-                query = urlencode(params)
-                url = f"{self.BASE_URL}{path}?{query}"
-                with urlopen(url, timeout=self.timeout_sec) as resp:
-                    payload = resp.read().decode("utf-8")
-                data = json_loads(payload)
-            except (TimeoutError, URLError) as exc:
-                if attempt < self._network_retries:
-                    attempt += 1
-                    time.sleep(0.6 * attempt)
-                    continue
-                raise RuntimeError(f"AMap POI timeout/network error: {exc}") from exc
+            amap_global_rate_limit_wait()
+            query = urlencode(params)
+            url = f"{self.BASE_URL}{path}?{query}"
+            with urlopen(url, timeout=self.timeout_sec) as resp:
+                payload = resp.read().decode("utf-8")
+            data = json_loads(payload)
             if str(data.get("status")) == "0" and str(data.get("infocode")) == "10021" and attempt < 3:
                 attempt += 1
                 time.sleep(0.6 * attempt)
