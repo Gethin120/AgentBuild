@@ -41,27 +41,35 @@ EOF
 fi
 
 USER_REQUEST="$1"
+DEBUG_MODE="${DEBUG:-0}"
+
+COMMON_ARGS=(
+  --user-request "$USER_REQUEST"
+  --lmstudio-base-url "$LMSTUDIO_BASE_URL"
+  --model "$MODEL_NAME"
+  --disable-thinking
+  --disable-llm-strategy
+  --disable-llm-judge
+  --retry-max-attempts 2
+  --llm-timeout-sec 30
+  --llm-max-retries 1
+  --planner-timeout-sec 120
+  --planner-max-retries 2
+)
+
+if [[ "$DEBUG_MODE" == "1" ]]; then
+  COMMON_ARGS+=(
+    --progress
+    --show-diagnostics
+    --print-intent
+    --json-stdout
+  )
+fi
 
 if [[ -x "/opt/miniconda3/bin/conda" ]]; then
   /opt/miniconda3/bin/conda run -n llm_local python -m "$PY_MODULE" \
-    --user-request "$USER_REQUEST" \
-    --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
-    --model "$MODEL_NAME" \
-    --progress \
-    --show-diagnostics \
-    --print-intent \
-    --retry-max-attempts 2 \
-    --planner-timeout-sec 120 \
-    --planner-max-retries 2
+    "${COMMON_ARGS[@]}"
 else
   python3 -m "$PY_MODULE" \
-    --user-request "$USER_REQUEST" \
-    --lmstudio-base-url "$LMSTUDIO_BASE_URL" \
-    --model "$MODEL_NAME" \
-    --progress \
-    --show-diagnostics \
-    --print-intent \
-    --retry-max-attempts 2 \
-    --planner-timeout-sec 120 \
-    --planner-max-retries 2
+    "${COMMON_ARGS[@]}"
 fi

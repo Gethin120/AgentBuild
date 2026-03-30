@@ -33,9 +33,9 @@ class Location:
 
 @dataclass(frozen=True)
 class PlanningConstraints:
-    passenger_travel_max_min: int = 60
-    driver_detour_max_min: int = 30
-    max_wait_min: int = 15
+    passenger_travel_max_min: Optional[int] = None
+    driver_detour_max_min: Optional[int] = None
+    max_wait_min: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -518,18 +518,22 @@ class RendezvousPlanner:
             total_arrival = pickup_departure + timedelta(minutes=pickup_to_destination)
 
             reject_reasons: List[str] = []
-            if passenger_to_pickup > request.constraints.passenger_travel_max_min:
+            passenger_limit = request.constraints.passenger_travel_max_min
+            detour_limit = request.constraints.driver_detour_max_min
+            wait_limit = request.constraints.max_wait_min
+
+            if passenger_limit is not None and passenger_to_pickup > passenger_limit:
                 reject_reasons.append(
                     "passenger_travel_exceeded "
-                    f"({passenger_to_pickup} > {request.constraints.passenger_travel_max_min})"
+                    f"({passenger_to_pickup} > {passenger_limit})"
                 )
-            if detour > request.constraints.driver_detour_max_min:
+            if detour_limit is not None and detour > detour_limit:
                 reject_reasons.append(
-                    f"driver_detour_exceeded ({detour} > {request.constraints.driver_detour_max_min})"
+                    f"driver_detour_exceeded ({detour} > {detour_limit})"
                 )
-            if wait_min > request.constraints.max_wait_min:
+            if wait_limit is not None and wait_min > wait_limit:
                 reject_reasons.append(
-                    f"wait_time_exceeded ({wait_min} > {request.constraints.max_wait_min})"
+                    f"wait_time_exceeded ({wait_min} > {wait_limit})"
                 )
 
             if reject_reasons:

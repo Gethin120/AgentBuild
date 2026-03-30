@@ -14,6 +14,23 @@ class RetryPolicy(TypedDict):
     planner_max_retries: int
 
 
+class StrategyPolicy(TypedDict):
+    step_wait_min: int
+    step_detour_min: int
+    step_passenger_travel_min: int
+    base_auto_radius_m: int
+    auto_radius_step_m: int
+    base_auto_limit: int
+    auto_limit_step: int
+    default_keywords: str
+
+
+class JudgePolicy(TypedDict):
+    max_avg_wait_min: int
+    max_avg_detour_min: int
+    min_options_required: int
+
+
 class StrategyPlan(TypedDict):
     strategy_type: StrategyType
     reason: str
@@ -42,4 +59,3 @@ class UserMemory:
     preferred_wait_max_min: Optional[int] = None
     preferred_detour_max_min: Optional[int] = None
     preferred_strategy: Optional[StrategyType] = None
-

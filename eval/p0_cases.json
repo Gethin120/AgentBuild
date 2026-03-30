@@ -1,0 +1,426 @@
+[
+  {
+    "id": "p0-shanghai-disney-auto",
+    "description": "上海市内双地出发，自动找点，典型可行样本",
+    "user_request": "我从上海虹桥火车站驾车出发，朋友在上海世纪大道地铁站，我们一起去上海迪士尼乐园。自动找会合点，朋友公交不超过120分钟，我最多绕路90分钟，最多等待45分钟。",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海世纪大道地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1200,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-shanghai-suzhou-cross-city",
+    "description": "跨城目的地，自动找点，覆盖长距离场景",
+    "user_request": "我从上海嘉定区曹安公路4750号驾车出发，朋友在上海张江高科地铁站，我们一起去苏州西山岛。自动找会合点，朋友公交地铁不超过100分钟，我最多绕路90分钟，最多等待45分钟。",
+    "intent": {
+      "driver_origin_address": "上海嘉定区曹安公路4750号",
+      "passenger_origin_address": "上海张江高科地铁站",
+      "destination_address": "苏州西山岛",
+      "geocode_city": "",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 100,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 25,
+        "radius_m": 1500,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-shanghai-tight-wait",
+    "description": "等待时间非常严格，预期可能无解",
+    "user_request": "我从上海虹桥火车站开车出发，朋友从上海陆家嘴站出发，我们一起去上海迪士尼。自动找会合点，朋友公交不超过90分钟，我绕路不超过45分钟，最多等待5分钟。",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海陆家嘴地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 90,
+        "driver_detour_max_min": 45,
+        "max_wait_min": 5
+      },
+      "weights": {
+        "arrival_weight": 0.5,
+        "wait_weight": 0.3,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 4.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["no_solution", "ok"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-manual-metro-points",
+    "description": "手动指定候选会合点",
+    "user_request": "我从上海虹桥站开车，朋友在世纪大道站，我们一起去上海迪士尼。会合点只考虑龙阳路、锦绣路和康桥东路。",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海世纪大道地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "manual",
+      "pickup_addresses": ["上海龙阳路地铁站", "上海锦绣路地铁站", "上海康桥东路地铁站"],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-hangzhou-westlake",
+    "description": "杭州本地样本，验证非上海城市",
+    "user_request": "我从杭州东站开车出发，朋友在龙翔桥地铁站，我们一起去西湖景区。自动找会合点，朋友公共交通不超过80分钟，我绕路不超过40分钟，最多等待20分钟。",
+    "intent": {
+      "driver_origin_address": "杭州东站",
+      "passenger_origin_address": "杭州龙翔桥地铁站",
+      "destination_address": "杭州西湖风景名胜区",
+      "geocode_city": "杭州",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 80,
+        "driver_detour_max_min": 40,
+        "max_wait_min": 20
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 18,
+        "radius_m": 1000,
+        "sample_km": 4.0,
+        "keywords": "地铁站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-shanghai-songjiang-hongqiao",
+    "description": "跨区但同城，限制中等",
+    "user_request": "我从上海松江大学城开车，朋友在静安寺地铁站，我们一起去上海虹桥机场。自动找会合点，朋友公交不超过70分钟，我绕路不超过50分钟，最多等待25分钟。",
+    "intent": {
+      "driver_origin_address": "上海松江大学城地铁站",
+      "passenger_origin_address": "上海静安寺地铁站",
+      "destination_address": "上海虹桥国际机场",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 70,
+        "driver_detour_max_min": 50,
+        "max_wait_min": 25
+      },
+      "weights": {
+        "arrival_weight": 0.6,
+        "wait_weight": 0.2,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 4.0,
+        "keywords": "地铁站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-shanghai-no-solution-detour",
+    "description": "司机绕路限制过低，预期更容易无解",
+    "user_request": "我从上海虹桥火车站开车，朋友在浦东机场，我们一起去苏州。自动找会合点，朋友地铁公交不超过120分钟，我绕路不超过10分钟，等待不超过20分钟。",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海浦东国际机场",
+      "destination_address": "苏州市中心",
+      "geocode_city": "",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 10,
+        "max_wait_min": 20
+      },
+      "weights": {
+        "arrival_weight": 0.5,
+        "wait_weight": 0.25,
+        "detour_weight": 0.25
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 25,
+        "radius_m": 1500,
+        "sample_km": 5.0,
+        "keywords": "地铁站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["no_solution", "ok"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-nanjing-scenic",
+    "description": "南京本地样本，验证城市泛化",
+    "user_request": "我从南京南站开车，朋友在新街口地铁站，我们一起去中山陵。自动找会合点，朋友公交不超过60分钟，我绕路不超过35分钟，最多等待20分钟。",
+    "intent": {
+      "driver_origin_address": "南京南站",
+      "passenger_origin_address": "南京新街口地铁站",
+      "destination_address": "南京中山陵",
+      "geocode_city": "南京",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 60,
+        "driver_detour_max_min": 35,
+        "max_wait_min": 20
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 18,
+        "radius_m": 1000,
+        "sample_km": 4.0,
+        "keywords": "地铁站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-invalid-manual-empty",
+    "description": "手动模式但未给候选点，预期 error",
+    "user_request": "我从上海虹桥站出发，朋友在世纪大道，我们一起去迪士尼，只手动指定会合点。",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海世纪大道地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "manual",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["error"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p0-invalid-address",
+    "description": "明显错误地址，预期 error",
+    "user_request": "我从一个不存在的地方 AAAA 出发，朋友在张江高科，我们一起去上海迪士尼。自动找会合点。",
+    "intent": {
+      "driver_origin_address": "不存在的地方 AAAA",
+      "passenger_origin_address": "上海张江高科地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "expected": {
+      "allowed_statuses": ["error", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p1-replan-passenger-delay",
+    "description": "朋友晚点后的动态重规划样本",
+    "previous_case_id": "p0-shanghai-disney-auto",
+    "user_request": "重规划：朋友晚点 20 分钟",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海世纪大道地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 120,
+        "driver_detour_max_min": 90,
+        "max_wait_min": 45
+      },
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1200,
+        "sample_km": 5.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "replan_event": {
+      "type": "passenger_delay",
+      "delay_min": 20,
+      "reason": "朋友出站晚了"
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0,
+      "is_replan": true,
+      "replan_type": "passenger_delay"
+    }
+  },
+  {
+    "id": "p1-replan-expand-wait",
+    "description": "等待约束放宽后的动态重规划样本",
+    "previous_case_id": "p0-shanghai-tight-wait",
+    "user_request": "重规划：等待时间放宽 15 分钟",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海陆家嘴地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "auto",
+      "pickup_addresses": [],
+      "constraints": {
+        "passenger_travel_max_min": 90,
+        "driver_detour_max_min": 45,
+        "max_wait_min": 5
+      },
+      "weights": {
+        "arrival_weight": 0.5,
+        "wait_weight": 0.3,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {
+        "limit": 20,
+        "radius_m": 1000,
+        "sample_km": 4.0,
+        "keywords": "地铁站|公交站|停车场|商场"
+      }
+    },
+    "replan_event": {
+      "type": "expand_wait",
+      "delta_min": 15,
+      "reason": "双方愿意多等一会儿"
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0,
+      "is_replan": true,
+      "replan_type": "expand_wait"
+    }
+  }
+]

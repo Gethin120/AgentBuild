@@ -5,7 +5,7 @@ import json
 import os
 import re
 from dataclasses import replace
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Tuple
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
@@ -21,6 +21,55 @@ from app.engine import (
 )
 
 
+def _build_lmstudio_headers() -> Dict[str, str]:
+    headers = {"Content-Type": "application/json"}
+    api_key = (
+        os.getenv("LM_STUDIO_API_KEY", "").strip()
+        or os.getenv("LMSTUDIO_API_KEY", "").strip()
+    )
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return headers
+
+
+def _extract_json_snippet_from_text(text: str) -> str:
+    raw = (text or "").strip()
+    if not raw:
+        return ""
+
+    fenced = re.findall(r"```json\s*(\{.*?\})\s*```", raw, flags=re.S)
+    if fenced:
+        return fenced[0].strip()
+
+    # Find the first balanced JSON object.
+    start = raw.find("{")
+    if start < 0:
+        return ""
+    depth = 0
+    in_string = False
+    escaped = False
+    for idx in range(start, len(raw)):
+        ch = raw[idx]
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return raw[start : idx + 1].strip()
+    return ""
+
+
 def call_lmstudio_chat(
     base_url: str,
     model: str,
@@ -29,6 +78,7 @@ def call_lmstudio_chat(
     temperature: float = 0.2,
     timeout_sec: int = 180,
     max_retries: int = 2,
+    enable_thinking: bool = False,
 ) -> str:
     endpoint = urljoin(base_url.rstrip("/") + "/", "chat/completions")
     payload = {
@@ -39,15 +89,33 @@ def call_lmstudio_chat(
             {"role": "user", "content": user_prompt},
         ],
     }
+    # Best-effort switch for Qwen-like thinking mode in OpenAI-compatible servers.
+    payload["chat_template_kwargs"] = {"enable_thinking": bool(enable_thinking)}
     data = json.dumps(payload).encode("utf-8")
-    req = Request(endpoint, data=data, headers={"Content-Type": "application/json"})
+    req = Request(endpoint, data=data, headers=_build_lmstudio_headers())
     attempt = 0
     while True:
         try:
             with urlopen(req, timeout=timeout_sec) as resp:
                 raw = resp.read().decode("utf-8")
             response = json.loads(raw)
-            return response["choices"][0]["message"]["content"]
+            message = ((response.get("choices") or [{}])[0]).get("message") or {}
+            content = message.get("content", "")
+            if isinstance(content, list):
+                content = "".join(str(x.get("text", "")) for x in content if isinstance(x, dict))
+            content = str(content or "").strip()
+            if content:
+                return content
+
+            # Some local models place output in reasoning_content when thinking is enabled.
+            reasoning = str(message.get("reasoning_content", "") or "").strip()
+            if reasoning:
+                snippet = _extract_json_snippet_from_text(reasoning)
+                if snippet:
+                    return snippet
+                return reasoning
+
+            raise ValueError("LM response has empty content and reasoning_content.")
         except Exception:
             if attempt >= max_retries:
                 raise
@@ -82,7 +150,7 @@ Return ONLY a JSON object with this schema:
   "driver_origin_address": "string",
   "passenger_origin_address": "string",
   "destination_address": "string",
-  "geocode_city": "string",
+  "geocode_city": "string (optional, empty if uncertain)",
   "candidate_mode": "auto" or "manual",
   "pickup_addresses": ["string"],
   "constraints": {{
@@ -107,9 +175,13 @@ Return ONLY a JSON object with this schema:
 Rules:
 - Default candidate_mode to "auto" if user did not provide manual pickup addresses.
 - If candidate_mode is "manual", pickup_addresses must not be empty.
+- Do NOT default geocode_city to any city (for example Shanghai).
+- Set geocode_city only when user explicitly specifies a single clear city for this trip.
+- If city is ambiguous or cross-city, set geocode_city to "".
 - Weights should sum to 1.0.
-- Be conservative and practical for defaults:
-  passenger_travel_max_min=120, driver_detour_max_min=90, max_wait_min=45
+- If user did not explicitly provide a hard limit, keep the corresponding constraints field absent or empty.
+- Do NOT invent default hard constraints for passenger travel, driver detour, or waiting time.
+- Use practical defaults only for non-constraint fields:
   top_n=3, auto limit=20, radius_m=1000, sample_km=5
 - Output JSON only.
 """.strip()
@@ -137,27 +209,192 @@ def validate_intent(intent: Dict[str, Any]) -> None:
         raise ValueError("candidate_mode=manual requires non-empty pickup_addresses")
 
 
+def _normalize_constraints(constraints: Dict[str, Any]) -> Dict[str, int]:
+    normalized: Dict[str, int] = {}
+    for key in ("passenger_travel_max_min", "driver_detour_max_min", "max_wait_min"):
+        value = constraints.get(key)
+        if value in (None, "", 0):
+            continue
+        numeric = int(value)
+        if numeric > 0:
+            normalized[key] = numeric
+    return normalized
+
+
+def _normalize_city_token(city: str) -> str:
+    value = city.strip()
+    if value.endswith("市"):
+        value = value[:-1]
+    return value.lower()
+
+
+def _extract_city_from_address(address: str) -> str:
+    text = (address or "").strip()
+    # Examples matched: 上海市, 杭州市, 北京市
+    match = re.search(r"([^\s,，]{2,12}?市)", text)
+    if not match:
+        return ""
+    return _normalize_city_token(match.group(1))
+
+
+def _city_hint_matches_addresses(city_hint: str, addresses: List[str]) -> bool:
+    hint = _normalize_city_token(city_hint)
+    if not hint:
+        return True
+    lowered_addrs = [a.lower() for a in addresses if a]
+    return any(hint in addr for addr in lowered_addrs)
+
+
+def _normalize_weights(weights: Dict[str, Any]) -> Dict[str, float]:
+    arrival = max(float(weights.get("arrival_weight", 0.55) or 0.0), 0.0)
+    wait = max(float(weights.get("wait_weight", 0.25) or 0.0), 0.0)
+    detour = max(float(weights.get("detour_weight", 0.20) or 0.0), 0.0)
+    total = arrival + wait + detour
+    if total <= 0:
+        return {
+            "arrival_weight": 0.55,
+            "wait_weight": 0.25,
+            "detour_weight": 0.20,
+        }
+    return {
+        "arrival_weight": round(arrival / total, 4),
+        "wait_weight": round(wait / total, 4),
+        "detour_weight": round(detour / total, 4),
+    }
+
+
+def _derive_preference_profile(weights: Dict[str, float]) -> str:
+    ranked = sorted(weights.items(), key=lambda item: item[1], reverse=True)
+    top_key, top_value = ranked[0]
+    second_value = ranked[1][1]
+
+    if top_value - second_value < 0.08:
+        return "balanced"
+    if top_key == "arrival_weight":
+        return "fast_arrival"
+    if top_key == "wait_weight":
+        return "min_wait"
+    if top_key == "detour_weight":
+        return "min_detour"
+    return "balanced"
+
+
+def _extract_numeric_constraint(user_request: str, patterns: List[str]) -> int | None:
+    text = str(user_request or "")
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            try:
+                return int(match.group(1))
+            except (TypeError, ValueError):
+                continue
+    return None
+
+
+def apply_request_constraint_overrides(intent: Dict[str, Any], user_request: str) -> Dict[str, Any]:
+    constraints = dict(intent.get("constraints", {}) or {})
+    explicit_passenger_max = _extract_numeric_constraint(
+        user_request,
+        [
+            r"(?:朋友|乘客)[^，。,；;\n]{0,20}?(?:公交地铁|公交|地铁|通勤)[^0-9]{0,8}?不超过\s*(\d+)\s*分钟",
+            r"(?:朋友|乘客)[^，。,；;\n]{0,20}?不超过\s*(\d+)\s*分钟",
+        ],
+    )
+    explicit_driver_detour_max = _extract_numeric_constraint(
+        user_request,
+        [
+            r"我[^，。,；;\n]{0,20}?最多绕路\s*(\d+)\s*分钟",
+            r"司机[^，。,；;\n]{0,20}?最多绕路\s*(\d+)\s*分钟",
+        ],
+    )
+    explicit_wait_max = _extract_numeric_constraint(
+        user_request,
+        [
+            r"(?:最多等待|最大等待|等待不超过)\s*(\d+)\s*分钟",
+        ],
+    )
+
+    if explicit_passenger_max is not None:
+        constraints["passenger_travel_max_min"] = explicit_passenger_max
+    if explicit_driver_detour_max is not None:
+        constraints["driver_detour_max_min"] = explicit_driver_detour_max
+    if explicit_wait_max is not None:
+        constraints["max_wait_min"] = explicit_wait_max
+
+    if constraints:
+        intent["constraints"] = constraints
+    return intent
+
+
 def sanitize_intent(intent: Dict[str, Any]) -> Dict[str, Any]:
+    intent["constraints"] = _normalize_constraints(intent.get("constraints", {}) or {})
     auto = intent.get("auto_pickup", {})
     keywords = str(auto.get("keywords", "")).strip()
     if not keywords:
         auto["keywords"] = "地铁站|公交站|停车场|商场"
     intent["auto_pickup"] = auto
+
+    addresses = [
+        str(intent.get("driver_origin_address", "")).strip(),
+        str(intent.get("passenger_origin_address", "")).strip(),
+        str(intent.get("destination_address", "")).strip(),
+    ]
+    city_hint = str(intent.get("geocode_city", "") or "").strip()
+
+    # If LLM gives a city hint that clearly mismatches all addresses, drop it.
+    if city_hint and not _city_hint_matches_addresses(city_hint, addresses):
+        city_hint = ""
+
+    # If city hint is empty but all core addresses contain the same city token, infer it.
+    if not city_hint:
+        inferred = [_extract_city_from_address(a) for a in addresses if a]
+        if len(inferred) == 3 and inferred[0] and inferred[0] == inferred[1] == inferred[2]:
+            city_hint = inferred[0]
+
+    normalized_weights = _normalize_weights(intent.get("weights", {}))
+    intent["weights"] = normalized_weights
+    intent["preference_profile"] = _derive_preference_profile(normalized_weights)
+    intent["driver_departure_delay_min"] = max(
+        int(intent.get("driver_departure_delay_min", 0) or 0),
+        0,
+    )
+    intent["passenger_departure_delay_min"] = max(
+        int(intent.get("passenger_departure_delay_min", 0) or 0),
+        0,
+    )
+    intent["geocode_city"] = city_hint
     return intent
 
 
 def run_plan(intent: Dict[str, Any], amap_key: str, show_diagnostics: bool) -> Dict[str, Any]:
     request = demo_request()
+    now = datetime.now()
 
     constraints = intent.get("constraints", {})
     weights = intent.get("weights", {})
 
     request = replace(
         request,
+        departure_time=now + timedelta(minutes=int(intent.get("driver_departure_delay_min", 0) or 0)),
+        passenger_departure_time=(
+            now + timedelta(minutes=int(intent.get("passenger_departure_delay_min", 0) or 0))
+        ),
         constraints=PlanningConstraints(
-            passenger_travel_max_min=int(constraints.get("passenger_travel_max_min", 120)),
-            driver_detour_max_min=int(constraints.get("driver_detour_max_min", 90)),
-            max_wait_min=int(constraints.get("max_wait_min", 45)),
+            passenger_travel_max_min=(
+                int(constraints["passenger_travel_max_min"])
+                if constraints.get("passenger_travel_max_min") is not None
+                else None
+            ),
+            driver_detour_max_min=(
+                int(constraints["driver_detour_max_min"])
+                if constraints.get("driver_detour_max_min") is not None
+                else None
+            ),
+            max_wait_min=(
+                int(constraints["max_wait_min"])
+                if constraints.get("max_wait_min") is not None
+                else None
+            ),
         ),
         weights=ScoringWeights(
             arrival_weight=float(weights.get("arrival_weight", 0.55)),
@@ -249,8 +486,8 @@ def main() -> int:
     parser.add_argument("--model", default="qwen/qwen3.5-9b")
     parser.add_argument("--show-diagnostics", action="store_true")
     parser.add_argument("--print-intent", action="store_true")
-    parser.add_argument("--llm-timeout-sec", type=int, default=180)
-    parser.add_argument("--llm-max-retries", type=int, default=2)
+    parser.add_argument("--llm-timeout-sec", type=int, default=30)
+    parser.add_argument("--llm-max-retries", type=int, default=1)
     args = parser.parse_args()
 
     if not args.amap_key:
@@ -266,6 +503,7 @@ def main() -> int:
         max_retries=args.llm_max_retries,
     )
     intent = extract_json_object(model_output)
+    intent = apply_request_constraint_overrides(intent, args.user_request)
     validate_intent(intent)
     intent = sanitize_intent(intent)
 
