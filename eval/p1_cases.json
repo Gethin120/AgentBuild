@@ -1,0 +1,140 @@
+[
+  {
+    "id": "p1-base-manual",
+    "description": "Base manual planning case for feedback replay.",
+    "user_request": "基础方案",
+    "intent": {
+      "driver_origin_address": "上海虹桥火车站",
+      "passenger_origin_address": "上海世纪大道地铁站",
+      "destination_address": "上海迪士尼乐园",
+      "geocode_city": "上海",
+      "candidate_mode": "manual",
+      "pickup_addresses": ["龙阳路地铁站", "锦绣路地铁站", "周浦万达广场"],
+      "constraints": {},
+      "weights": {
+        "arrival_weight": 0.55,
+        "wait_weight": 0.25,
+        "detour_weight": 0.2
+      },
+      "top_n": 3,
+      "auto_pickup": {}
+    },
+    "expected": {
+      "allowed_statuses": ["ok"],
+      "min_feasible_options": 1
+    }
+  },
+  {
+    "id": "p1-feedback-min-wait",
+    "description": "Feedback asks to minimize wait.",
+    "user_request": "别让我等太久",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "reason": "别让我等太久，我们可以晚点出发"
+    },
+    "expected": {
+      "allowed_statuses": ["ok"],
+      "min_feasible_options": 1
+    }
+  },
+  {
+    "id": "p1-feedback-low-transfer",
+    "description": "Feedback asks to reduce transfers.",
+    "user_request": "少换乘",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "type": "plan_feedback",
+      "signals": [
+        {"kind": "passenger_experience", "value": "low_transfer", "strength": "soft"}
+      ]
+    },
+    "expected": {
+      "allowed_statuses": ["ok"],
+      "min_feasible_options": 1
+    }
+  },
+  {
+    "id": "p1-feedback-prefer-metro",
+    "description": "Feedback prefers metro pickup.",
+    "user_request": "优先地铁站",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "reason": "优先地铁站"
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p1-feedback-avoid-parking-unfriendly",
+    "description": "Feedback says current point is hard to park.",
+    "user_request": "这个点不好停车",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "type": "plan_feedback",
+      "signals": [
+        {"kind": "pickup_point", "value": "parking_unfriendly", "strength": "soft"}
+      ]
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p1-select-alternative",
+    "description": "Select the second option without replanning.",
+    "user_request": "选第二个方案",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "type": "option_selection",
+      "target_option": "alternative_1",
+      "signals": [
+        {"kind": "selection", "value": "select_option", "strength": "hard"}
+      ]
+    },
+    "selected_option_ref": "alternative_1",
+    "expected": {
+      "allowed_statuses": ["selected"],
+      "min_feasible_options": 0
+    }
+  },
+  {
+    "id": "p1-selected-then-passenger-delay",
+    "description": "After selection, passenger delay triggers replan.",
+    "user_request": "朋友晚点 15 分钟",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "replan_event": {
+      "type": "passenger_delay",
+      "delay_min": 15,
+      "reason": "朋友晚到"
+    },
+    "expected": {
+      "allowed_statuses": ["ok", "no_solution"],
+      "min_feasible_options": 0,
+      "is_replan": true,
+      "replan_type": "passenger_delay"
+    }
+  },
+  {
+    "id": "p1-unrecognized-feedback",
+    "description": "Unknown feedback should fail clearly.",
+    "user_request": "随便调一下",
+    "intent": {},
+    "previous_case_id": "p1-base-manual",
+    "feedback_event": {
+      "reason": "随便调一下"
+    },
+    "expected": {
+      "allowed_statuses": ["error"],
+      "min_feasible_options": 0
+    }
+  }
+]

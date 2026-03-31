@@ -51,6 +51,7 @@ class ResponsePayloadTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "ok")
         self.assertEqual(payload["summary"]["preference_profile"], "min_wait")
+        self.assertIn("active_preferences", payload["summary"])
         self.assertIn("share_text", payload)
         self.assertIn("share_card", payload)
         self.assertTrue(payload["share_card"]["title"].startswith("推荐会合点"))
@@ -204,6 +205,10 @@ class ResponsePayloadTests(unittest.TestCase):
                     "eta_driver_to_pickup": "2026-03-30T09:10",
                     "eta_passenger_to_pickup": "2026-03-30T10:32",
                     "pickup_wait_time_min": 82,
+                    "raw_wait_time_min": 82,
+                    "optimized_wait_time_min": 22,
+                    "departure_shift_role": "driver",
+                    "departure_shift_min": 60,
                     "driver_detour_time_min": 12,
                     "total_arrival_time": "2026-03-30T12:18",
                 }
@@ -214,10 +219,12 @@ class ResponsePayloadTests(unittest.TestCase):
 
         self.assertEqual(payload["status"], "ok")
         self.assertIn("现场等待较长", payload["summary"]["experience_warning"])
-        self.assertEqual(payload["summary"]["departure_advice"], "建议司机稍晚出发约 82 分钟，可明显减少现场等待。")
+        self.assertEqual(payload["summary"]["optimized_wait_min"], 22)
+        self.assertEqual(payload["summary"]["departure_shift_min"], 60)
+        self.assertEqual(payload["summary"]["departure_advice"], "建议司机稍晚出发约 60 分钟，可明显减少现场等待。")
         self.assertEqual(
             payload["recommended_option"]["departure_advice"],
-            "建议司机稍晚出发约 82 分钟，可明显减少现场等待。",
+            "建议司机稍晚出发约 60 分钟，可明显减少现场等待。",
         )
 
     def test_replan_natural_language_mentions_delta(self) -> None:

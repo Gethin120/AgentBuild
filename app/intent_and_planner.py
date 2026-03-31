@@ -353,7 +353,35 @@ def sanitize_intent(intent: Dict[str, Any]) -> Dict[str, Any]:
 
     normalized_weights = _normalize_weights(intent.get("weights", {}))
     intent["weights"] = normalized_weights
-    intent["preference_profile"] = _derive_preference_profile(normalized_weights)
+    intent["preference_profile"] = str(
+        intent.get("preference_profile") or _derive_preference_profile(normalized_weights)
+    )
+    overrides = []
+    for item in (intent.get("preference_overrides", []) or []):
+        value = str(item or "").strip()
+        if value and value not in overrides:
+            overrides.append(value)
+    intent["preference_overrides"] = overrides
+    intent["feedback_state"] = dict(intent.get("feedback_state", {}) or {})
+    intent["prefer_pickup_tags"] = [
+        str(item).strip()
+        for item in (intent.get("prefer_pickup_tags", []) or [])
+        if str(item).strip()
+    ]
+    intent["avoid_pickup_tags"] = [
+        str(item).strip()
+        for item in (intent.get("avoid_pickup_tags", []) or [])
+        if str(item).strip()
+    ]
+    intent["exclude_pickup_points"] = [
+        str(item).strip()
+        for item in (intent.get("exclude_pickup_points", []) or [])
+        if str(item).strip()
+    ]
+    intent["max_departure_shift_min"] = max(
+        int(intent.get("max_departure_shift_min", 60) or 60),
+        0,
+    )
     intent["driver_departure_delay_min"] = max(
         int(intent.get("driver_departure_delay_min", 0) or 0),
         0,
@@ -402,6 +430,12 @@ def run_plan(intent: Dict[str, Any], amap_key: str, show_diagnostics: bool) -> D
             detour_weight=float(weights.get("detour_weight", 0.20)),
         ),
         top_n=int(intent.get("top_n", 3)),
+        preference_profile=str(intent.get("preference_profile", "balanced")),
+        preference_overrides=tuple(intent.get("preference_overrides", []) or []),
+        max_departure_shift_min=int(intent.get("max_departure_shift_min", 60) or 60),
+        prefer_pickup_tags=tuple(intent.get("prefer_pickup_tags", []) or []),
+        avoid_pickup_tags=tuple(intent.get("avoid_pickup_tags", []) or []),
+        exclude_pickup_points=tuple(intent.get("exclude_pickup_points", []) or []),
     )
 
     mode = intent["candidate_mode"]
@@ -464,7 +498,14 @@ def run_plan(intent: Dict[str, Any], amap_key: str, show_diagnostics: bool) -> D
                 "eta_driver_to_pickup": x.eta_driver_to_pickup.isoformat(timespec="minutes"),
                 "eta_passenger_to_pickup": x.eta_passenger_to_pickup.isoformat(timespec="minutes"),
                 "pickup_wait_time_min": x.pickup_wait_time,
+                "raw_wait_time_min": x.raw_wait_time,
+                "optimized_wait_time_min": x.optimized_wait_time,
+                "departure_shift_role": x.departure_shift_role,
+                "departure_shift_min": x.departure_shift_min,
                 "driver_detour_time_min": x.driver_detour_time,
+                "fairness_gap_time_min": x.fairness_gap_time,
+                "passenger_transfer_count": x.passenger_transfer_count,
+                "pickup_tags": list(x.pickup_tags),
                 "total_arrival_time": x.total_arrival_time.isoformat(timespec="minutes"),
             }
             for x in options

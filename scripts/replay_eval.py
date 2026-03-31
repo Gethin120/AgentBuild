@@ -110,6 +110,7 @@ def run_case(
 ) -> Tuple[bool, Dict[str, Any], Dict[str, Any]]:
     intent = case.get("intent", {})
     replan_event = case.get("replan_event", {})
+    feedback_event = case.get("feedback_event", {})
     expected = case.get("expected", {})
     allowed_statuses = list(expected.get("allowed_statuses", ["ok"]))
     min_feasible_options = int(expected.get("min_feasible_options", 1))
@@ -128,11 +129,13 @@ def run_case(
         str(case.get("user_request", case.get("id", ""))),
         "--intent-json-path",
         tmp_path,
+        "--json-stdout",
         "--disable-thinking",
         "--disable-llm-strategy",
         "--disable-llm-judge",
     ]
     replan_tmp_path = ""
+    feedback_tmp_path = ""
     previous_response_tmp_path = ""
     output_json_path = ""
     intent_output_json_path = ""
@@ -147,6 +150,13 @@ def run_case(
             json.dump(replan_event, replan_tmp, ensure_ascii=False)
             replan_tmp_path = replan_tmp.name
         cmd.extend(["--replan-event-json-path", replan_tmp_path])
+    if feedback_event:
+        with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as feedback_tmp:
+            json.dump(feedback_event, feedback_tmp, ensure_ascii=False)
+            feedback_tmp_path = feedback_tmp.name
+        cmd.extend(["--feedback-json-path", feedback_tmp_path])
+        if case.get("selected_option_ref"):
+            cmd.extend(["--selected-option-ref", str(case.get("selected_option_ref"))])
     if previous_payload:
         with tempfile.NamedTemporaryFile("w", suffix=".json", encoding="utf-8", delete=False) as previous_tmp:
             json.dump(previous_payload, previous_tmp, ensure_ascii=False)
@@ -171,6 +181,11 @@ def run_case(
         if replan_tmp_path:
             try:
                 os.unlink(replan_tmp_path)
+            except FileNotFoundError:
+                pass
+        if feedback_tmp_path:
+            try:
+                os.unlink(feedback_tmp_path)
             except FileNotFoundError:
                 pass
         if previous_response_tmp_path:
@@ -218,6 +233,7 @@ def run_case(
         "recommendation_basis": (((payload.get("response_payload") or {}).get("recommended_option") or {}).get("recommendation_basis")),
         "is_replan": (((payload.get("response_payload") or {}).get("summary") or {}).get("is_replan")),
         "replan_type": (((payload.get("metrics_summary") or {}).get("replan_type"))),
+        "selected_option_ref": (((payload.get("metrics_summary") or {}).get("selected_option_ref"))),
         "replan_delta": (((payload.get("response_payload") or {}).get("summary") or {}).get("replan_delta")),
         "linked_previous_case_id": case.get("previous_case_id"),
         "artifacts": {

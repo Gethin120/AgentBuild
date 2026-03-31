@@ -58,6 +58,12 @@ class RendezvousRequest:
     constraints: PlanningConstraints = PlanningConstraints()
     weights: ScoringWeights = ScoringWeights()
     top_n: int = 3
+    preference_profile: str = "balanced"
+    preference_overrides: Tuple[str, ...] = ()
+    max_departure_shift_min: int = 60
+    prefer_pickup_tags: Tuple[str, ...] = ()
+    avoid_pickup_tags: Tuple[str, ...] = ()
+    exclude_pickup_points: Tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -70,7 +76,14 @@ class RendezvousOption:
     eta_driver_to_pickup: datetime
     eta_passenger_to_pickup: datetime
     pickup_wait_time: int
+    raw_wait_time: int
+    optimized_wait_time: int
+    departure_shift_role: str
+    departure_shift_min: int
     driver_detour_time: int
+    fairness_gap_time: int
+    passenger_transfer_count: int
+    pickup_tags: Tuple[str, ...]
     total_arrival_time: datetime
     score: float
 
@@ -90,6 +103,11 @@ class TravelTimeProvider(Protocol):
     def estimate_minutes(
         self, origin: Location, destination: Location, mode: str, depart_at: datetime
     ) -> int:
+        ...
+
+    def estimate_details(
+        self, origin: Location, destination: Location, mode: str, depart_at: datetime
+    ) -> Dict[str, int]:
         ...
 
 
@@ -126,6 +144,15 @@ class MockTravelTimeProvider:
         total = int(round(drive_minutes * peak_factor + overhead))
         return max(total, 1)
 
+    def estimate_details(
+        self, origin: Location, destination: Location, mode: str, depart_at: datetime
+    ) -> Dict[str, int]:
+        minutes = self.estimate_minutes(origin, destination, mode, depart_at)
+        transfer_count = 0
+        if mode == "transit":
+            transfer_count = max(0, min(4, minutes // 35))
+        return {"minutes": minutes, "transfer_count": transfer_count}
+
 
 class AMapTravelTimeProvider:
     BASE_URL = "https://restapi.amap.com"
@@ -154,6 +181,49 @@ class AMapTravelTimeProvider:
 
         self._travel_cache[cache_key] = minutes
         return minutes
+
+    def estimate_details(
+        self, origin: Location, destination: Location, mode: str, depart_at: datetime
+    ) -> Dict[str, int]:
+        if mode == "driving":
+            return {
+                "minutes": self.estimate_minutes(origin, destination, mode, depart_at),
+                "transfer_count": 0,
+            }
+
+        city = self._infer_city_code(origin)
+        cityd = self._infer_city_code(destination)
+        data = self._get_json(
+            "/v3/direction/transit/integrated",
+            {
+                "origin": f"{origin.lon},{origin.lat}",
+                "destination": f"{destination.lon},{destination.lat}",
+                "city": city,
+                "cityd": cityd,
+                "strategy": "0",
+                "nightflag": "0",
+                "key": self.api_key,
+            },
+        )
+        self._assert_ok(data)
+        transits = (((data.get("route") or {}).get("transits")) or [])
+        if not transits:
+            raise RuntimeError("AMap transit returned no path.")
+        transit = transits[0] or {}
+        duration_sec = int(float(transit.get("duration", 0) or 0))
+        segments = transit.get("segments") or []
+        line_count = 0
+        for segment in segments:
+            bus = (segment.get("bus") or {}).get("buslines") or []
+            railway = segment.get("railway") or {}
+            if bus:
+                line_count += 1
+            elif railway and (railway.get("name") or railway.get("trip")):
+                line_count += 1
+        return {
+            "minutes": max(round(duration_sec / 60), 1),
+            "transfer_count": max(line_count - 1, 0),
+        }
 
     def _driving_minutes(self, origin: Location, destination: Location) -> int:
         data = self._get_json(
@@ -489,22 +559,67 @@ class RendezvousPlanner:
         options: List[RendezvousOption] = []
         filtered_candidates: List[FilteredCandidate] = []
         for pickup_point in request.pickup_candidates:
+            if pickup_point.name in request.exclude_pickup_points:
+                filtered_candidates.append(
+                    FilteredCandidate(
+                        pickup_point=pickup_point,
+                        reasons=["pickup_point_excluded_by_feedback"],
+                    )
+                )
+                continue
+
+            pickup_tags = infer_pickup_tags(pickup_point.name)
+            if request.prefer_pickup_tags and not set(request.prefer_pickup_tags).intersection(pickup_tags):
+                filtered_candidates.append(
+                    FilteredCandidate(
+                        pickup_point=pickup_point,
+                        reasons=[f"pickup_tag_not_preferred ({'|'.join(sorted(pickup_tags))})"],
+                    )
+                )
+                continue
+            if request.avoid_pickup_tags and set(request.avoid_pickup_tags).intersection(pickup_tags):
+                filtered_candidates.append(
+                    FilteredCandidate(
+                        pickup_point=pickup_point,
+                        reasons=[f"pickup_tag_avoided ({'|'.join(sorted(pickup_tags))})"],
+                    )
+                )
+                continue
+
             driver_to_pickup = self.provider.estimate_minutes(
                 request.driver_origin,
                 pickup_point,
                 request.driver_mode,
                 request.departure_time,
             )
-            passenger_to_pickup = self.provider.estimate_minutes(
-                request.passenger_origin,
-                pickup_point,
-                request.passenger_mode,
-                passenger_departure,
-            )
+            if hasattr(self.provider, "estimate_details"):
+                passenger_details = self.provider.estimate_details(
+                    request.passenger_origin,
+                    pickup_point,
+                    request.passenger_mode,
+                    passenger_departure,
+                )
+            else:
+                passenger_details = {
+                    "minutes": self.provider.estimate_minutes(
+                        request.passenger_origin,
+                        pickup_point,
+                        request.passenger_mode,
+                        passenger_departure,
+                    ),
+                    "transfer_count": 0,
+                }
+            passenger_to_pickup = int(passenger_details.get("minutes", 0) or 0)
+            passenger_transfer_count = int(passenger_details.get("transfer_count", 0) or 0)
 
             eta_driver = request.departure_time + timedelta(minutes=driver_to_pickup)
             eta_passenger = passenger_departure + timedelta(minutes=passenger_to_pickup)
-            wait_min = abs(int((eta_driver - eta_passenger).total_seconds() // 60))
+            raw_wait_min = abs(int((eta_driver - eta_passenger).total_seconds() // 60))
+            departure_shift_role, departure_shift_min, optimized_wait_min = compute_wait_optimization(
+                eta_driver=eta_driver,
+                eta_passenger=eta_passenger,
+                max_departure_shift_min=request.max_departure_shift_min,
+            )
 
             pickup_departure = max(eta_driver, eta_passenger)
             pickup_to_destination = self.provider.estimate_minutes(
@@ -516,6 +631,7 @@ class RendezvousPlanner:
 
             detour = driver_to_pickup + pickup_to_destination - direct_minutes
             total_arrival = pickup_departure + timedelta(minutes=pickup_to_destination)
+            fairness_gap = abs(driver_to_pickup - passenger_to_pickup)
 
             reject_reasons: List[str] = []
             passenger_limit = request.constraints.passenger_travel_max_min
@@ -531,9 +647,9 @@ class RendezvousPlanner:
                 reject_reasons.append(
                     f"driver_detour_exceeded ({detour} > {detour_limit})"
                 )
-            if wait_limit is not None and wait_min > wait_limit:
+            if wait_limit is not None and optimized_wait_min > wait_limit:
                 reject_reasons.append(
-                    f"wait_time_exceeded ({wait_min} > {wait_limit})"
+                    f"wait_time_exceeded ({optimized_wait_min} > {wait_limit})"
                 )
 
             if reject_reasons:
@@ -542,10 +658,15 @@ class RendezvousPlanner:
                 )
                 continue
 
-            score = (
-                request.weights.arrival_weight * minutes_since(request.departure_time, total_arrival)
-                + request.weights.wait_weight * wait_min
-                + request.weights.detour_weight * detour
+            score = self._compute_score(
+                request=request,
+                total_arrival=total_arrival,
+                raw_wait_min=raw_wait_min,
+                optimized_wait_min=optimized_wait_min,
+                detour=detour,
+                fairness_gap=fairness_gap,
+                passenger_transfer_count=passenger_transfer_count,
+                departure_shift_min=departure_shift_min,
             )
 
             options.append(
@@ -557,8 +678,15 @@ class RendezvousPlanner:
                     travel_time_driver_direct=direct_minutes,
                     eta_driver_to_pickup=eta_driver,
                     eta_passenger_to_pickup=eta_passenger,
-                    pickup_wait_time=wait_min,
+                    pickup_wait_time=raw_wait_min,
+                    raw_wait_time=raw_wait_min,
+                    optimized_wait_time=optimized_wait_min,
+                    departure_shift_role=departure_shift_role,
+                    departure_shift_min=departure_shift_min,
                     driver_detour_time=detour,
+                    fairness_gap_time=fairness_gap,
+                    passenger_transfer_count=passenger_transfer_count,
+                    pickup_tags=tuple(sorted(pickup_tags)),
                     total_arrival_time=total_arrival,
                     score=round(score, 2),
                 )
@@ -569,9 +697,74 @@ class RendezvousPlanner:
             filtered_candidates=filtered_candidates
         )
 
+    def _compute_score(
+        self,
+        *,
+        request: RendezvousRequest,
+        total_arrival: datetime,
+        raw_wait_min: int,
+        optimized_wait_min: int,
+        detour: int,
+        fairness_gap: int,
+        passenger_transfer_count: int,
+        departure_shift_min: int,
+    ) -> float:
+        arrival_cost = minutes_since(request.departure_time, total_arrival)
+        wait_cost = optimized_wait_min if request.preference_profile == "min_wait" else raw_wait_min
+        wait_cost += round(0.3 * departure_shift_min, 2)
+        score = (
+            request.weights.arrival_weight * arrival_cost
+            + request.weights.wait_weight * wait_cost
+            + request.weights.detour_weight * detour
+        )
+        if "low_transfer" in request.preference_overrides:
+            score += passenger_transfer_count * 8.0
+        if "balanced_fairness" in request.preference_overrides:
+            score += fairness_gap * 0.35
+        if request.preference_profile == "min_wait":
+            score -= min(raw_wait_min - optimized_wait_min, 60) * 0.2
+        if request.preference_profile == "min_detour":
+            score += detour * 0.15
+        if request.preference_profile == "fast_arrival":
+            score -= arrival_cost * 0.1
+        return score
+
 
 def minutes_since(start: datetime, end: datetime) -> int:
     return int((end - start).total_seconds() // 60)
+
+
+def compute_wait_optimization(
+    *,
+    eta_driver: datetime,
+    eta_passenger: datetime,
+    max_departure_shift_min: int,
+) -> Tuple[str, int, int]:
+    delta_min = abs(int((eta_driver - eta_passenger).total_seconds() // 60))
+    if delta_min <= 0:
+        return "", 0, 0
+    role = "driver" if eta_driver < eta_passenger else "passenger"
+    shift_min = min(delta_min, max(max_departure_shift_min, 0))
+    optimized_wait = max(delta_min - shift_min, 0)
+    return role, shift_min, optimized_wait
+
+
+def infer_pickup_tags(name: str) -> Set[str]:
+    text = str(name or "")
+    tags: Set[str] = set()
+    if any(keyword in text for keyword in ("地铁站", "地铁", "轨交", "站")):
+        tags.add("metro")
+    if any(keyword in text for keyword in ("商场", "广场", "万达", "mall")):
+        tags.add("mall")
+    if any(keyword in text for keyword in ("停车场", "停车", "P+R")):
+        tags.add("parking")
+    if not tags:
+        tags.add("generic")
+    if "mall" in tags and "parking" not in tags:
+        tags.add("parking_unfriendly")
+    if "generic" in tags:
+        tags.add("low_landmark_confidence")
+    return tags
 
 
 def haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:

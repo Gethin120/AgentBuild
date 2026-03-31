@@ -83,6 +83,8 @@ jiebanerxing/
 5. `retry`：必要时自动重试
 6. `compose`：生成 `response_payload` 和自然语言结果
 7. `persist`：写入 `.runs/trace.jsonl`
+8. `await_feedback`：通过 LangGraph `interrupt()` 等待下一轮反馈
+9. `resume`：通过同一 `thread_id` 恢复协商
 
 ## 环境要求
 
@@ -106,14 +108,73 @@ MODEL_NAME=qwen/qwen3.5-9b
 
 ## 快速开始
 
-日常手工测试：
+一轮命令式使用：
 
 ```bash
 cd /Users/gethin/workspace/jiebanerxing
 sh ./run.sh "我从上海虹桥火车站出发，朋友在上海世纪大道地铁站，我们一起去上海迪士尼乐园。自动找会合点。"
 ```
 
-默认只输出最终自然语言结果。
+交互式使用：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh
+```
+
+进入交互模式后：
+
+```text
+jieban> 我从上海虹桥火车站出发，朋友在上海世纪大道地铁站，我们一起去上海迪士尼乐园。自动找会合点。
+jieban> 朋友尽量不要换乘。
+jieban> /select 2
+jieban> /status
+```
+
+继续对当前 active session 提反馈：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh --feedback "别让我等太久，我们可以晚点出发。"
+```
+
+直接选择当前 active session 的某个方案：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh --select "alternative_1"
+```
+
+查看当前会话状态：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh --status
+```
+
+查看最近会话：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh --sessions
+```
+
+关闭当前会话：
+
+```bash
+cd /Users/gethin/workspace/jiebanerxing
+sh ./run.sh --close
+```
+
+说明：
+
+- `run.sh` 现在只是一个 launcher，真正的交互逻辑在 [`app/chat_cli.py`](/Users/gethin/workspace/jiebanerxing/app/chat_cli.py)
+- LangGraph 会用 `session_id == thread_id` 维护同一条协商线程
+- 图执行状态由本地 checkpointer 持久化到 [`.runs/langgraph_checkpoints`](/Users/gethin/workspace/jiebanerxing/.runs/langgraph_checkpoints)
+- 产品态摘要仍保存在 [`.runs/sessions`](/Users/gethin/workspace/jiebanerxing/.runs/sessions)，包含当前推荐、已选方案、反馈历史和会话索引
+- 普通自然语言请求默认新开一个 session；在交互模式里，已有 active session 时，普通输入默认当作反馈继续协商
+- 常用 slash commands：`/new`、`/status`、`/sessions`、`/use <id>`、`/close`、`/select <n>`
+- 退出交互模式可用：`/exit` 或 `Ctrl-D`
 
 如果你想看完整调试信息、解析结果和 JSON 输出：
 

@@ -26,7 +26,14 @@ def compact_plan_result(result: Dict[str, Any]) -> Dict[str, Any]:
                 "eta_driver_to_pickup": option.get("eta_driver_to_pickup"),
                 "eta_passenger_to_pickup": option.get("eta_passenger_to_pickup"),
                 "pickup_wait_time_min": option.get("pickup_wait_time_min"),
+                "raw_wait_time_min": option.get("raw_wait_time_min"),
+                "optimized_wait_time_min": option.get("optimized_wait_time_min"),
+                "departure_shift_role": option.get("departure_shift_role"),
+                "departure_shift_min": option.get("departure_shift_min"),
                 "driver_detour_time_min": option.get("driver_detour_time_min"),
+                "fairness_gap_time_min": option.get("fairness_gap_time_min"),
+                "passenger_transfer_count": option.get("passenger_transfer_count"),
+                "pickup_tags": option.get("pickup_tags"),
                 "total_arrival_time": option.get("total_arrival_time"),
             }
         )
@@ -49,6 +56,11 @@ def build_natural_language_output(
     retry_count: int,
     error: str = "",
 ) -> str:
+    if status == "selected":
+        return str(
+            (((result or {}).get("selection_payload") or {}).get("execution_ready_share_text"))
+            or "方案已确认。"
+        )
     if status == "error":
         return f"本次规划失败：{error}"
 
@@ -124,7 +136,8 @@ def build_natural_language_output(
             f"{idx}. 会合点「{option.get('pickup_point')}」，"
             f"你预计 {option.get('eta_driver_to_pickup')} 到达，"
             f"朋友预计 {option.get('eta_passenger_to_pickup')} 到达，"
-            f"等待约 {option.get('pickup_wait_time_min')} 分钟，"
+            f"原始等待约 {option.get('raw_wait_time_min', option.get('pickup_wait_time_min'))} 分钟，"
+            f"优化后等待约 {option.get('optimized_wait_time_min', option.get('pickup_wait_time_min'))} 分钟，"
             f"司机绕路约 {option.get('driver_detour_time_min')} 分钟，"
             f"预计到达目的地时间 {option.get('total_arrival_time')}。"
         )
@@ -311,13 +324,19 @@ def _build_relaxation_suggestions(intent: Dict[str, Any], result: Dict[str, Any]
 
 
 def _option_tradeoff_tags(option: Dict[str, Any], options: List[Dict[str, Any]]) -> List[str]:
-    wait_min = _safe_int(option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(option.get("optimized_wait_time_min", option.get("pickup_wait_time_min")))
     detour_min = _safe_int(option.get("driver_detour_time_min"))
     arrival_time = _safe_datetime(option.get("total_arrival_time"))
+    transfer_count = _safe_int(option.get("passenger_transfer_count"))
+    fairness_gap = _safe_int(option.get("fairness_gap_time_min"))
 
-    min_wait = min(_safe_int(x.get("pickup_wait_time_min")) for x in options)
+    min_wait = min(
+        _safe_int(x.get("optimized_wait_time_min", x.get("pickup_wait_time_min"))) for x in options
+    )
     min_detour = min(_safe_int(x.get("driver_detour_time_min")) for x in options)
     earliest_arrival = min(_safe_datetime(x.get("total_arrival_time")) for x in options)
+    min_transfer = min(_safe_int(x.get("passenger_transfer_count")) for x in options)
+    min_fairness_gap = min(_safe_int(x.get("fairness_gap_time_min")) for x in options)
 
     tags: List[str] = []
     if wait_min == min_wait:
@@ -326,6 +345,10 @@ def _option_tradeoff_tags(option: Dict[str, Any], options: List[Dict[str, Any]])
         tags.append("min_detour")
     if arrival_time == earliest_arrival:
         tags.append("fast_arrival")
+    if transfer_count == min_transfer:
+        tags.append("low_transfer")
+    if fairness_gap == min_fairness_gap:
+        tags.append("balanced_fairness")
     if not tags:
         tags.append("balanced")
     return tags
@@ -343,6 +366,10 @@ def _option_recommendation_basis(option: Dict[str, Any], options: List[Dict[str,
         return "min_wait"
     if "min_detour" in tags:
         return "min_detour"
+    if "low_transfer" in tags:
+        return "low_transfer"
+    if "balanced_fairness" in tags:
+        return "balanced_fairness"
     return "balanced"
 
 
@@ -352,18 +379,26 @@ def _preference_profile_label(profile: str) -> str:
         "fast_arrival": "更快到达",
         "min_wait": "更少等待",
         "min_detour": "更少绕路",
+        "low_transfer": "更少换乘",
+        "balanced_fairness": "更公平",
     }
     return mapping.get(profile, "均衡优先")
 
 
 def _recommended_reason(option: Dict[str, Any], options: List[Dict[str, Any]]) -> str:
-    wait_min = _safe_int(option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(option.get("optimized_wait_time_min", option.get("pickup_wait_time_min")))
     detour_min = _safe_int(option.get("driver_detour_time_min"))
     arrival_time = _safe_datetime(option.get("total_arrival_time"))
+    transfer_count = _safe_int(option.get("passenger_transfer_count"))
+    fairness_gap = _safe_int(option.get("fairness_gap_time_min"))
 
-    min_wait = min(_safe_int(x.get("pickup_wait_time_min")) for x in options)
+    min_wait = min(
+        _safe_int(x.get("optimized_wait_time_min", x.get("pickup_wait_time_min"))) for x in options
+    )
     min_detour = min(_safe_int(x.get("driver_detour_time_min")) for x in options)
     earliest_arrival = min(_safe_datetime(x.get("total_arrival_time")) for x in options)
+    min_transfer = min(_safe_int(x.get("passenger_transfer_count")) for x in options)
+    min_fairness_gap = min(_safe_int(x.get("fairness_gap_time_min")) for x in options)
 
     strengths: List[str] = []
     if wait_min == min_wait:
@@ -372,6 +407,10 @@ def _recommended_reason(option: Dict[str, Any], options: List[Dict[str, Any]]) -
         strengths.append("司机绕路最少")
     if arrival_time == earliest_arrival:
         strengths.append("整体到达最快")
+    if transfer_count == min_transfer:
+        strengths.append("乘客换乘更少")
+    if fairness_gap == min_fairness_gap:
+        strengths.append("双方时间成本更公平")
 
     if not strengths:
         strengths.append("整体取舍最均衡")
@@ -379,22 +418,32 @@ def _recommended_reason(option: Dict[str, Any], options: List[Dict[str, Any]]) -
     joined = "、".join(strengths[:2])
     return (
         f"推荐这个方案，因为它在当前候选中{joined}。"
-        f"预计等待约 {wait_min} 分钟，司机绕路约 {detour_min} 分钟。"
+        f"优化后等待约 {wait_min} 分钟，司机绕路约 {detour_min} 分钟。"
     )
 
 
 def _alternative_reason(option: Dict[str, Any], recommended: Dict[str, Any], options: List[Dict[str, Any]]) -> str:
-    wait_min = _safe_int(option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(option.get("optimized_wait_time_min", option.get("pickup_wait_time_min")))
     detour_min = _safe_int(option.get("driver_detour_time_min"))
     arrival_time = _safe_datetime(option.get("total_arrival_time"))
+    transfer_count = _safe_int(option.get("passenger_transfer_count"))
+    fairness_gap = _safe_int(option.get("fairness_gap_time_min"))
 
-    rec_wait = _safe_int(recommended.get("pickup_wait_time_min"))
+    rec_wait = _safe_int(
+        recommended.get("optimized_wait_time_min", recommended.get("pickup_wait_time_min"))
+    )
     rec_detour = _safe_int(recommended.get("driver_detour_time_min"))
     rec_arrival = _safe_datetime(recommended.get("total_arrival_time"))
+    rec_transfer = _safe_int(recommended.get("passenger_transfer_count"))
+    rec_fairness_gap = _safe_int(recommended.get("fairness_gap_time_min"))
 
-    min_wait = min(_safe_int(x.get("pickup_wait_time_min")) for x in options)
+    min_wait = min(
+        _safe_int(x.get("optimized_wait_time_min", x.get("pickup_wait_time_min"))) for x in options
+    )
     min_detour = min(_safe_int(x.get("driver_detour_time_min")) for x in options)
     earliest_arrival = min(_safe_datetime(x.get("total_arrival_time")) for x in options)
+    min_transfer = min(_safe_int(x.get("passenger_transfer_count")) for x in options)
+    min_fairness_gap = min(_safe_int(x.get("fairness_gap_time_min")) for x in options)
 
     tags: List[str] = []
     if wait_min == min_wait:
@@ -403,6 +452,10 @@ def _alternative_reason(option: Dict[str, Any], recommended: Dict[str, Any], opt
         tags.append("更少绕路")
     if arrival_time == earliest_arrival:
         tags.append("更快到达")
+    if transfer_count == min_transfer:
+        tags.append("更少换乘")
+    if fairness_gap == min_fairness_gap:
+        tags.append("更公平")
 
     if not tags:
         if wait_min < rec_wait:
@@ -411,6 +464,10 @@ def _alternative_reason(option: Dict[str, Any], recommended: Dict[str, Any], opt
             tags.append("绕路更少")
         elif arrival_time < rec_arrival:
             tags.append("到达更早")
+        elif transfer_count < rec_transfer:
+            tags.append("换乘更少")
+        elif fairness_gap < rec_fairness_gap:
+            tags.append("双方更公平")
         else:
             tags.append("可作为稳妥备选")
 
@@ -430,7 +487,7 @@ def _wait_experience_level(wait_min: int) -> str:
 
 
 def _build_wait_warning(option: Dict[str, Any]) -> str:
-    wait_min = _safe_int(option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(option.get("raw_wait_time_min", option.get("pickup_wait_time_min")))
     level = _wait_experience_level(wait_min)
     if level == "high":
         return f"当前推荐方案现场等待较长，预计约 {wait_min} 分钟，建议不要按双方同时出发直接执行。"
@@ -440,6 +497,14 @@ def _build_wait_warning(option: Dict[str, Any]) -> str:
 
 
 def _build_departure_advice(option: Dict[str, Any]) -> str:
+    explicit_role = str(option.get("departure_shift_role", "") or "").strip()
+    explicit_shift = _safe_int(option.get("departure_shift_min", 0))
+    if explicit_role and explicit_shift >= 10:
+        if explicit_role == "driver":
+            return f"建议司机稍晚出发约 {explicit_shift} 分钟，可明显减少现场等待。"
+        if explicit_role == "passenger":
+            return f"建议朋友稍晚出发约 {explicit_shift} 分钟，可明显减少现场等待。"
+
     driver_eta = _safe_datetime(option.get("eta_driver_to_pickup"))
     passenger_eta = _safe_datetime(option.get("eta_passenger_to_pickup"))
     if driver_eta == datetime.max or passenger_eta == datetime.max:
@@ -461,7 +526,9 @@ def _build_share_text(
     recommended_option: Dict[str, Any],
 ) -> str:
     pickup_point = str(recommended_option.get("pickup_point", "待确认会合点"))
-    wait_min = _safe_int(recommended_option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(
+        recommended_option.get("optimized_wait_time_min", recommended_option.get("pickup_wait_time_min"))
+    )
     detour_min = _safe_int(recommended_option.get("driver_detour_time_min"))
     arrival_time = str(recommended_option.get("total_arrival_time", ""))
     return (
@@ -478,7 +545,9 @@ def _build_share_card(
     recommended_option: Dict[str, Any],
 ) -> Dict[str, Any]:
     pickup_point = str(recommended_option.get("pickup_point", "待确认会合点"))
-    wait_min = _safe_int(recommended_option.get("pickup_wait_time_min"))
+    wait_min = _safe_int(
+        recommended_option.get("optimized_wait_time_min", recommended_option.get("pickup_wait_time_min"))
+    )
     detour_min = _safe_int(recommended_option.get("driver_detour_time_min"))
     arrival_time = str(recommended_option.get("total_arrival_time", ""))
     return {
@@ -530,8 +599,12 @@ def _build_replan_delta(intent: Dict[str, Any], recommended_option: Dict[str, An
 
     current_pickup = str(recommended_option.get("pickup_point", "") or "")
     previous_pickup = str(previous.get("pickup_point", "") or "")
-    current_wait = _safe_int(recommended_option.get("pickup_wait_time_min"))
-    previous_wait = _safe_int(previous.get("pickup_wait_time_min"))
+    current_wait = _safe_int(
+        recommended_option.get("optimized_wait_time_min", recommended_option.get("pickup_wait_time_min"))
+    )
+    previous_wait = _safe_int(
+        previous.get("optimized_wait_time_min", previous.get("pickup_wait_time_min"))
+    )
     current_detour = _safe_int(recommended_option.get("driver_detour_time_min"))
     previous_detour = _safe_int(previous.get("driver_detour_time_min"))
 
@@ -586,15 +659,29 @@ def build_response_payload(
             "preference_label": _preference_profile_label(
                 str(intent.get("preference_profile", "balanced"))
             ),
+            "active_preferences": [
+                str(intent.get("preference_profile", "balanced")),
+                *list(intent.get("preference_overrides", []) or []),
+            ],
             "is_replan": bool(intent.get("replan_context")),
             "replan_context": dict(intent.get("replan_context", {}) or {}),
             "replan_summary": _build_replan_summary(intent),
             "replan_delta": {},
             "experience_warning": "",
             "departure_advice": "",
+            "raw_wait_min": None,
+            "optimized_wait_min": None,
+            "departure_shift_role": "",
+            "departure_shift_min": 0,
+            "selection_state": "planning",
         },
         "recommended_option": None,
         "alternative_options": [],
+        "selected_option": None,
+        "selection_summary": {},
+        "execution_ready_share_text": "",
+        "execution_ready_share_card": {},
+        "next_actions": [],
         "suggestions": [],
         "relaxation_suggestions": [],
         "primary_bottleneck": None,
@@ -670,6 +757,14 @@ def build_response_payload(
     payload["summary"]["replan_delta"] = _build_replan_delta(intent, recommended)
     payload["summary"]["experience_warning"] = recommended["wait_warning"]
     payload["summary"]["departure_advice"] = recommended["departure_advice"]
+    payload["summary"]["raw_wait_min"] = _safe_int(
+        recommended.get("raw_wait_time_min", recommended.get("pickup_wait_time_min"))
+    )
+    payload["summary"]["optimized_wait_min"] = _safe_int(
+        recommended.get("optimized_wait_time_min", recommended.get("pickup_wait_time_min"))
+    )
+    payload["summary"]["departure_shift_role"] = str(recommended.get("departure_shift_role", ""))
+    payload["summary"]["departure_shift_min"] = _safe_int(recommended.get("departure_shift_min", 0))
     payload["share_text"] = _build_share_text(
         driver_name=driver_name,
         passenger_name=passenger_name,

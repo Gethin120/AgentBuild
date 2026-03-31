@@ -5,6 +5,14 @@ from typing import Any, Dict, List, Literal, Optional, TypedDict
 
 
 StrategyType = Literal["balanced", "fast_arrival", "min_wait", "min_detour"]
+PreferenceType = Literal[
+    "balanced",
+    "fast_arrival",
+    "min_wait",
+    "min_detour",
+    "low_transfer",
+    "balanced_fairness",
+]
 
 
 class RetryPolicy(TypedDict):
@@ -45,11 +53,25 @@ class JudgeResult(TypedDict):
     risks: List[str]
 
 
+class FeedbackSignal(TypedDict, total=False):
+    kind: str
+    value: str
+    strength: str
+
+
+class FeedbackEvent(TypedDict, total=False):
+    type: str
+    target_option: str
+    signals: List[FeedbackSignal]
+    reason: str
+
+
 @dataclass
 class SessionMemory:
     intents: List[Dict[str, Any]] = field(default_factory=list)
     strategies: List[StrategyPlan] = field(default_factory=list)
     judge_results: List[JudgeResult] = field(default_factory=list)
+    feedback_events: List[FeedbackEvent] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
 
 
@@ -59,3 +81,4 @@ class UserMemory:
     preferred_wait_max_min: Optional[int] = None
     preferred_detour_max_min: Optional[int] = None
     preferred_strategy: Optional[StrategyType] = None
+    preferred_overrides: List[PreferenceType] = field(default_factory=list)

@@ -73,6 +73,7 @@ class SanitizeIntentTests(unittest.TestCase):
                 "wait_weight": 0.34,
                 "detour_weight": 0.26,
             },
+            "preference_overrides": ["low_transfer", "balanced_fairness", "low_transfer"],
             "top_n": 3,
             "auto_pickup": {},
         }
@@ -80,6 +81,8 @@ class SanitizeIntentTests(unittest.TestCase):
         sanitized = sanitize_intent(intent)
 
         self.assertEqual(sanitized["preference_profile"], "balanced")
+        self.assertEqual(sanitized["preference_overrides"], ["low_transfer", "balanced_fairness"])
+        self.assertEqual(sanitized["max_departure_shift_min"], 60)
         self.assertEqual(sanitized["driver_departure_delay_min"], 0)
         self.assertEqual(sanitized["passenger_departure_delay_min"], 0)
 

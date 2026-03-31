@@ -94,7 +94,9 @@ def evaluate_plan_quality(
             "risks": ["insufficient_options"],
         }
 
-    wait_values = [int(x.get("pickup_wait_time_min", 0)) for x in options]
+    wait_values = [
+        int(x.get("optimized_wait_time_min", x.get("pickup_wait_time_min", 0))) for x in options
+    ]
     detour_values = [int(x.get("driver_detour_time_min", 0)) for x in options]
     avg_wait = sum(wait_values) / max(len(wait_values), 1)
     avg_detour = sum(detour_values) / max(len(detour_values), 1)
